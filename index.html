@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Winamp on waemu</title>
+<script src="coi-sw.js"></script>
+<style>
+:root {
+  --bg: #14161a;
+  --panel: #1c1f26;
+  --line: #2b303b;
+  --fg: #e6e8ec;
+  --dim: #9aa3b2;
+  --accent: #7cc4ff;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+}
+header {
+  display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center;
+  padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line);
+}
+h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: .02em; }
+h1 span { color: var(--dim); font-weight: 400; }
+label { color: var(--dim); }
+select, button {
+  font: inherit; color: var(--fg); background: #262b34;
+  border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px;
+}
+button { cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .45; cursor: default; }
+main { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 20px; }
+#screen-wrap { background: #000; border: 1px solid var(--line); border-radius: 4px; line-height: 0; position: relative; }
+canvas {
+  display: block; width: 1600px; max-width: calc(100vw - 44px); aspect-ratio: 16 / 9;
+  outline: none; cursor: default; image-rendering: pixelated;
+}
+#sound { position: absolute; right: 10px; top: 10px; line-height: 1.4; }
+#ime { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; resize: none; }
+#status { min-height: 1.6em; color: var(--dim); }
+#status.err { color: #ff8a8a; white-space: pre-wrap; }
+.box {
+  width: 100%; max-width: 1600px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px;
+}
+.box.drop { border-color: var(--accent); }
+.box-head { color: var(--dim); margin-bottom: 6px; }
+.box-head span { font-size: 12px; }
+.bar { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+.bar .path { font: 13px/1.5 ui-monospace, monospace; color: var(--accent); }
+/* The listing scrolls inside the panel, so a full C:\Music does not stretch the page. */
+#filelist { max-height: 22.5rem; overflow-y: auto; scrollbar-color: #4a505c var(--panel); scrollbar-width: thin;
+  border-top: 1px solid #22262e; border-bottom: 1px solid #22262e; }
+#filelist::-webkit-scrollbar { width: 10px; }
+#filelist::-webkit-scrollbar-track { background: var(--panel); }
+#filelist::-webkit-scrollbar-thumb { background: #4a505c; border-radius: 5px; border: 2px solid var(--panel); }
+#filelist::-webkit-scrollbar-thumb:hover { background: #626a78; }
+#files { width: 100%; border-collapse: collapse; }
+#files td { padding: 3px 8px 3px 0; border-top: 1px solid #22262e; }
+#files td.name { font: 13px/1.5 ui-monospace, monospace; word-break: break-all; }
+#files td.name a { color: var(--accent); text-decoration: none; cursor: pointer; }
+#files td.size, #files td.date { color: var(--dim); text-align: right; white-space: nowrap; font-size: 12px; }
+#files td.actions { white-space: nowrap; text-align: right; }
+#files td.actions button { margin-left: 4px; padding: 2px 7px; font-size: 12px; }
+#files tr.user td.name::after { content: " ●"; color: #ffcf6a; font-size: 10px; }
+#note { color: var(--dim); font-size: 12px; }
+#note.err { color: #ff8a8a; }
+.notes { max-width: 1600px; width: 100%; color: var(--dim); font-size: 13px; }
+.notes h2 { font-size: 13px; color: var(--fg); margin: 18px 0 6px; }
+.notes td { padding: 1px 14px 1px 0; vertical-align: top; }
+.notes kbd { background: #262b34; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px;
+             padding: 0 5px; font: 12px/1.5 ui-monospace, monospace; color: var(--fg); }
+.notes a { color: var(--accent); }
+.notes code { color: var(--fg); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Winamp 2.95 <span>on waemu — Windows 版の exe をそのままブラウザで</span></h1>
+  <span>
+    <label for="upload-top">ファイルを入れる</label>
+    <input type="file" id="upload-top" multiple>
+  </span>
+  <button id="reset" title="入れたファイルをこのブラウザから消して再起動">保存データを消す</button>
+</header>
+
+<main>
+  <div id="screen-wrap">
+    <canvas id="screen" tabindex="0" width="1280" height="800"></canvas>
+    <textarea id="ime" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+    <button id="sound">🔇 音を出す</button>
+  </div>
+  <div id="status">読み込んでいます…</div>
+
+  <div class="box" id="filebox">
+    <div class="box-head">
+      ファイル <span>— Winamp から見える <code>C:\Music</code> の中身。MP3 はここか画面へドラッグ＆ドロップしても入れられます。
+      ● は入れたもの（このブラウザに残ります）。▶ で再生、＋ でプレイリストに追加</span>
+    </div>
+    <div class="bar">
+      <button id="up" disabled>上へ</button>
+      <span id="path" class="path">C:\Music</span>
+    </div>
+    <div id="filelist"><table id="files"></table></div>
+    <div class="bar">
+      <button id="add" disabled>ファイルを入れる</button>
+      <button id="mkdir" disabled>新規フォルダ</button>
+      <button id="refresh" disabled>更新</button>
+      <input type="file" id="upload" multiple hidden>
+    </div>
+    <div id="note"></div>
+  </div>
+
+  <div class="notes">
+    <h2>これは何か</h2>
+    <p>
+      Windows 版 <strong>Winamp 2.95</strong>（2003 年、Nullsoft）の実行ファイルとプラグイン
+      （<code>winamp.exe</code>・<code>in_mp3.dll</code>・<code>out_wave.dll</code>）を、改造せずに
+      x86 エミュレータの中で動かしています。Windows の API（user32・gdi32・winmm など）はエミュレータの側で
+      作り直したもので、MP3 のデコードも x86 の命令を一つずつ解釈して行っています。
+      音は waveOut に書かれた PCM を AudioWorklet で鳴らしています。ファイルはブラウザの中だけに置かれ、どこにも送信されません。
+    </p>
+    <h2>操作</h2>
+    <table>
+      <tr><td>最初に</td><td>画面右上の「音を出す」か、画面をクリック（ブラウザの決まりで、クリックするまで音が出せません）</td></tr>
+      <tr><td>曲を鳴らす</td><td>下のパネルの ▶。MP3 はパネルか画面へドラッグ＆ドロップで入れられます。サンプルとして <code>doremi.mp3</code> があります</td></tr>
+      <tr><td>キーボード</td><td>画面をクリックしてから。Winamp のキー操作（<kbd>X</kbd> 再生・<kbd>C</kbd> 一時停止・<kbd>V</kbd> 停止・<kbd>Z</kbd>/<kbd>B</kbd> 前/次）が使えます</td></tr>
+      <tr><td>右クリック</td><td>Winamp のメニュー。右ボタンが無いときは <kbd>Ctrl</kbd>＋クリック</td></tr>
+    </table>
+    <h2>権利</h2>
+    <p>
+      Winamp は Nullsoft の著作物です。comctl32.dll は Wine（LGPL）、フォントは IPAex（IPA フォントライセンス）ほか。詳しくは
+      <a href="https://github.com/yomei-o/winamp_emu_cpp">リポジトリ</a>の README をご覧ください。
+    </p>
+  </div>
+</main>
+
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const statusEl = $('status'), canvas = $('screen'), ime = $('ime'), note = $('note');
+const ROOT = '/C:/Music';
+const SCREEN_W = 800, SCREEN_H = 450;
+
+function say(text, err) { statusEl.textContent = text; statusEl.classList.toggle('err', !!err); }
+function tell(text, err) { note.textContent = text; note.classList.toggle('err', !!err); }
+
+// ---- IndexedDB: the files the user added ----------------------
+function openDb() {
+  return new Promise((ok, fail) => {
+    const r = indexedDB.open('waemu', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('files', {keyPath: 'path'});
+    r.onsuccess = () => ok(r.result);
+    r.onerror = () => fail(r.error);
+  });
+}
+let dbp = null;
+const db = () => (dbp = dbp || openDb());
+async function dbAll() {
+  const d = await db();
+  return new Promise((ok) => { const r = d.transaction('files').objectStore('files').getAll(); r.onsuccess = () => ok(r.result || []); r.onerror = () => ok([]); });
+}
+async function dbPut(rec) {
+  const d = await db();
+  return new Promise((ok) => { const t = d.transaction('files', 'readwrite'); t.objectStore('files').put(rec); t.oncomplete = ok; t.onerror = ok; });
+}
+async function dbDelete(prefix) {
+  const d = await db();
+  const all = await dbAll();
+  return new Promise((ok) => {
+    const t = d.transaction('files', 'readwrite');
+    for (const r of all) if (r.path === prefix || r.path.startsWith(prefix + '/')) t.objectStore('files').delete(r.path);
+    t.oncomplete = ok; t.onerror = ok;
+  });
+}
+
+if (!window.crossOriginIsolated) {
+  say('このページは SharedArrayBuffer が必要です。自動で再読み込みします（進まなければ手動で再読み込みしてください）。');
+} else {
+  start();
+}
+
+async function start() {
+  // The event ring the worker reads: [0] written, [1] read, [2] file-op ack, then 8 ints per event.
+  const SLOTS = 8, BASE = 16, N = 4096;
+  const events = new Int32Array(new SharedArrayBuffer((BASE + SLOTS * N) * 4));
+  const PATH_BYTES = 1024, CHUNK = 4 << 20;
+  const mailbox = new Uint8Array(new SharedArrayBuffer(PATH_BYTES + CHUNK));
+  function push(type, x, y, button, key, mods, extra, size) {
+    const w = Atomics.load(events, 0), r = Atomics.load(events, 1);
+    if (w - r >= N) return;
+    const at = BASE + (w % N) * SLOTS;
+    events[at] = type; events[at + 1] = x | 0; events[at + 2] = y | 0; events[at + 3] = button | 0;
+    events[at + 4] = key | 0; events[at + 5] = mods | 0; events[at + 6] = extra | 0; events[at + 7] = size | 0;
+    Atomics.store(events, 0, w + 1);
+    Atomics.notify(events, 0);
+  }
+  const T = {MouseMove: 1, MouseDown: 2, MouseUp: 3, Wheel: 4, KeyDown: 5, KeyUp: 6, Char: 7, Resize: 8, Quit: 9};
+
+  let registry = null;
+  try { registry = localStorage.getItem('waemu-registry'); } catch (e) {}
+  const saved = await dbAll();
+
+  // ---- sound: a ring the worker fills and an AudioWorklet drains ----------
+  const AUDIO_FRAMES = 1 << 18;  // about 6 s at 44.1 kHz
+  const audioHeader = new Int32Array(new SharedArrayBuffer(16 * 4));
+  const audioPcm = new SharedArrayBuffer(AUDIO_FRAMES * 4);
+  audioHeader[4] = audioHeader[5] = 65535;
+  window.waAudioHeader = audioHeader;  // for tools/web_test.mjs
+  let actx = null, starting = null;
+  function startSound() {
+    if (starting) return actx && actx.state !== 'running' ? actx.resume() : starting;
+    starting = (async () => {
+      actx = new AudioContext({latencyHint: 'interactive'});
+      await actx.audioWorklet.addModule('audio-worklet.js');
+      const node = new AudioWorkletNode(actx, 'waemu-out', {numberOfInputs: 0, outputChannelCount: [2],
+        processorOptions: {header: audioHeader.buffer, pcm: audioPcm}});
+      node.connect(actx.destination);
+      if (actx.state !== 'running') await actx.resume();
+      $('sound').textContent = '🔊 音あり';
+      $('sound').disabled = true;
+    })();
+    return starting;
+  }
+  $('sound').onclick = () => startSound().catch((e) => say('音を出せませんでした: ' + e, true));
+  for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, () => startSound().catch(() => {}), {capture: true});
+  const view = canvas.getContext('bitmaprenderer');
+  const worker = new Worker('worker.js');
+  worker.postMessage({type: 'start', events: events.buffer, mailbox: mailbox.buffer, width: SCREEN_W, height: SCREEN_H,
+                      audioHeader: audioHeader.buffer, audioPcm,
+                      registry, files: saved.map((f) => ({path: f.path, data: f.data, dir: f.dir, deleted: f.deleted}))});
+
+  // ---- file operations, one at a time through the mailbox ---------------------
+  // A file-op event: [0]=type [1]=id [2]=offset [3]=length [4]=total.
+  let opId = 1;
+  const replies = new Map();
+  let chain = Promise.resolve();
+  const enc = new TextEncoder();
+  function serial(fn) { const p = chain.then(fn, fn); chain = p.catch(() => {}); return p; }
+  async function waitAck(id) {
+    for (;;) {
+      const cur = Atomics.load(events, 2);
+      if (cur === id) return;
+      if (Atomics.waitAsync) await Atomics.waitAsync(events, 2, cur, 500).value;
+      else await new Promise((r) => setTimeout(r, 20));
+    }
+  }
+  function op(type, path, data, offset, total) {
+    return serial(async () => {
+      const id = opId++;
+      mailbox.fill(0, 0, PATH_BYTES);
+      mailbox.set(enc.encode(path).slice(0, PATH_BYTES - 1), 0);
+      if (data) mailbox.set(data, PATH_BYTES);
+      const reply = (type === 100 || type === 101) ? new Promise((r) => replies.set(id, r)) : null;
+      push(type, id, offset || 0, data ? data.length : 0, total || 0, 0, 0, 0);
+      await waitAck(id);
+      return reply ? await reply : null;
+    });
+  }
+  const listAll = () => op(100, ROOT);
+  const readFile = (p) => op(101, p);
+  async function writeFile(p, bytes) {
+    if (!bytes.length) return op(102, p, new Uint8Array(0), 0, 0);
+    for (let off = 0; off < bytes.length; off += CHUNK) await op(102, p, bytes.subarray(off, off + CHUNK), off, bytes.length);
+  }
+  const removePath = (p) => op(103, p);
+  const makeDir = (p) => op(104, p);
+  const playFile = (p, now) => op(now ? 105 : 106, p);
+
+  // ---- what is on the drive, and what is ours -----------------------------
+  let baseline = null;    // path -> mtime when Winamp started
+  let snapshot = new Map();
+  let entries = [];
+  const userPaths = new Set(saved.filter((f) => !f.deleted).map((f) => f.path));
+  let cwd = ROOT;
+  let ready = false;
+
+  worker.onerror = (e) => say('worker error: ' + (e.message || e), true);
+  const cursors = {32512: 'default', 32513: 'text', 32514: 'wait', 32515: 'crosshair', 32642: 'nwse-resize',
+                   32643: 'nesw-resize', 32644: 'ew-resize', 32645: 'ns-resize', 32646: 'move', 32649: 'pointer', 0: 'crosshair'};
+  let started = false;
+  worker.onmessage = (e) => {
+    const m = e.data;
+    if (m.type === 'frame') {
+      view.transferFromImageBitmap(m.bitmap);
+      if (!started) { started = true; say('動作中'); }
+    } else if (m.type === 'ready') {
+      baseline = new Map(m.entries.map((x) => [x.p, x.mtime]));
+      setEntries(m.entries);
+      ready = true;
+      for (const b of ['up', 'add', 'mkdir', 'refresh']) $(b).disabled = false;
+      render();
+    } else if (m.type === 'list' || m.type === 'file') {
+      const r = replies.get(m.id);
+      if (r) { replies.delete(m.id); r(m); }
+    } else if (m.type === 'status') {
+      if (m.text === 'running') say('起動しています…（数秒かかります）');
+      else if (m.text !== 'starting') say(m.text, /jwemu:/.test(m.text));
+    } else if (m.type === 'log') {
+      console.log(m.text);
+    } else if (m.type === 'cursor') {
+      canvas.style.cursor = cursors[m.id] || 'default';
+    } else if (m.type === 'clipboard') {
+      if (navigator.clipboard) navigator.clipboard.writeText(m.text).catch(() => {});
+    } else if (m.type === 'persist') {
+      try { localStorage.setItem('waemu-registry', m.text); } catch (err) {}
+    }
+  };
+
+  function setEntries(list) {
+    entries = list;
+    snapshot = new Map(list.map((x) => [x.p, x]));
+  }
+
+  // Changes on the drive: compare with the last listing and keep what changed.
+  async function sync() {
+    if (!ready) return;
+    const r = await listAll();
+    if (!r) return;
+    const now = new Map(r.entries.map((x) => [x.p, x]));
+    for (const x of r.entries) {
+      const old = snapshot.get(x.p);
+      if (x.dir) {
+        if (!old && !baseline.has(x.p)) { await dbPut({path: x.p, dir: true}); userPaths.add(x.p); }
+        continue;
+      }
+      if (old && old.mtime === x.mtime && old.size === x.size) continue;
+      if (!old && baseline.get(x.p) === x.mtime) continue;
+      const f = await readFile(x.p);
+      if (f && f.data) { await dbPut({path: x.p, data: f.data.buffer}); userPaths.add(x.p); }
+    }
+    for (const [p] of snapshot) {
+      if (now.has(p)) continue;
+      if (baseline.has(p)) await dbPut({path: p, deleted: true});
+      else await dbDelete(p);
+      userPaths.delete(p);
+    }
+    setEntries(r.entries);
+    render();
+  }
+  setInterval(() => { if (!document.hidden) sync().catch(() => {}); }, 3000);
+
+  // ---- the panel ------------------------------------------------------------
+  const winPath = (p) => 'C:' + p.slice(3).replace(/\//g, '\\');
+  const fmtSize = (n) => n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
+  const fmtDate = (t) => { const d = new Date(t); return d.toLocaleDateString('ja-JP') + ' ' + d.toLocaleTimeString('ja-JP', {hour: '2-digit', minute: '2-digit'}); };
+  let shownDir = null;
+  function render() {
+    $('path').textContent = winPath(cwd);
+    if (shownDir !== cwd) { $('filelist').scrollTop = 0; shownDir = cwd; }
+    $('up').disabled = !ready || cwd === ROOT;
+    const kids = entries.filter((x) => x.p.slice(0, x.p.lastIndexOf('/')) === cwd)
+      .sort((a, b) => (b.dir - a.dir) || a.p.localeCompare(b.p, 'ja'));
+    const t = $('files');
+    t.textContent = '';
+    for (const x of kids) {
+      const name = x.p.slice(x.p.lastIndexOf('/') + 1);
+      const tr = document.createElement('tr');
+      if (userPaths.has(x.p)) tr.className = 'user';
+      const td = (cls, child) => { const c = document.createElement('td'); c.className = cls; if (child) c.append(child); tr.append(c); return c; };
+      if (x.dir) {
+        const a = document.createElement('a');
+        a.textContent = name + '\\';
+        a.onclick = () => { cwd = x.p; render(); };
+        td('name', a);
+      } else {
+        td('name', document.createTextNode(name));
+      }
+      td('size', document.createTextNode(x.dir ? '' : fmtSize(x.size)));
+      td('date', document.createTextNode(x.dir ? '' : fmtDate(x.mtime)));
+      const act = td('actions');
+      if (!x.dir && /\.(mp3|mp2|mp1|m3u|pls)$/i.test(name)) {
+        const play = document.createElement('button');
+        play.textContent = '▶';
+        play.title = '再生';
+        play.onclick = () => { startSound().catch(() => {}); playFile(x.p, true); };
+        const add = document.createElement('button');
+        add.textContent = '＋';
+        add.title = 'プレイリストに追加';
+        add.onclick = () => playFile(x.p, false);
+        act.append(play, add);
+      }
+      if (!x.dir) {
+        const dl = document.createElement('button');
+        dl.textContent = 'DL';
+        dl.onclick = () => download(x.p);
+        act.append(dl);
+      }
+      const del = document.createElement('button');
+      del.textContent = '削除';
+      del.onclick = () => remove(x.p, x.dir);
+      act.append(del);
+      t.append(tr);
+    }
+    if (!kids.length) {
+      const tr = document.createElement('tr');
+      const c = document.createElement('td');
+      c.textContent = '（空）';
+      c.className = 'size';
+      tr.append(c);
+      t.append(tr);
+    }
+  }
+  async function download(p) {
+    const f = await readFile(p);
+    if (!f || !f.data) return tell('読めませんでした: ' + winPath(p), true);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([f.data]));
+    a.download = p.slice(p.lastIndexOf('/') + 1);
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  }
+  async function remove(p, dir) {
+    if (!confirm(winPath(p) + (dir ? ' をフォルダごと' : ' を') + '削除しますか？')) return;
+    await removePath(p);
+    if (baseline.has(p)) await dbPut({path: p, deleted: true});
+    else await dbDelete(p);
+    await sync();
+    tell('削除しました: ' + winPath(p));
+  }
+  async function addFiles(files, play) {
+    if (!ready) return;
+    let n = 0, first = null;
+    for (const file of files) {
+      const p = cwd + '/' + file.name;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      tell('入れています: ' + file.name);
+      await writeFile(p, bytes);
+      await dbPut({path: p, data: bytes.buffer});
+      userPaths.add(p);
+      if (/\.(mp3|mp2|mp1)$/i.test(file.name)) { await playFile(p, play && !first); first = first || p; }
+      n++;
+    }
+    await sync();
+    tell(n + ' 個のファイルを ' + winPath(cwd) + ' に入れました。' + (first ? 'プレイリストに追加しました。' : ''));
+  }
+  $('up').onclick = () => { cwd = cwd.slice(0, cwd.lastIndexOf('/')); render(); };
+  $('add').onclick = () => $('upload').click();
+  $('upload').onchange = (e) => { addFiles([...e.target.files]); e.target.value = ''; };
+  $('upload-top').onchange = (e) => { addFiles([...e.target.files]); e.target.value = ''; };
+  $('refresh').onclick = () => sync();
+  $('mkdir').onclick = async () => {
+    const name = prompt('新しいフォルダの名前');
+    if (!name || /[\\/:*?"<>|]/.test(name)) return;
+    const p = cwd + '/' + name;
+    await makeDir(p);
+    await dbPut({path: p, dir: true});
+    userPaths.add(p);
+    await sync();
+  };
+  $('reset').onclick = async () => {
+    if (!confirm('入れたファイルをこのブラウザから消して、再起動します。よろしいですか？')) return;
+    await dbDelete(ROOT);
+    try { localStorage.removeItem('waemu-registry'); } catch (e) {}
+    location.reload();
+  };
+  for (const el of [$('filebox'), canvas]) {
+    el.addEventListener('dragover', (e) => { e.preventDefault(); $('filebox').classList.add('drop'); });
+    el.addEventListener('dragleave', () => $('filebox').classList.remove('drop'));
+    el.addEventListener('drop', (e) => { e.preventDefault(); $('filebox').classList.remove('drop'); startSound().catch(() => {}); addFiles([...e.dataTransfer.files], true); });
+  }
+
+  // ---- input --------------------------------------------------------------------
+  const mods = (e) => (e.shiftKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.altKey ? 4 : 0);
+  const pos = (e) => {
+    const r = canvas.getBoundingClientRect();
+    return [Math.floor((e.clientX - r.left) * SCREEN_W / r.width), Math.floor((e.clientY - r.top) * SCREEN_H / r.height)];
+  };
+  // Ctrl+click is the right button, for a mouse or pad without one.
+  const ctrlClick = (e) => e.button === 0 && e.ctrlKey;
+  const button = (e) => (e.button === 2 || ctrlClick(e) ? 1 : e.button === 1 ? 2 : 0);
+  const btnMods = (e) => mods(e) & ~(ctrlClick(e) ? 2 : 0);
+  canvas.addEventListener('pointermove', (e) => { const [x, y] = pos(e); push(T.MouseMove, x, y, 0, 0, mods(e)); });
+  canvas.addEventListener('pointerdown', (e) => {
+    canvas.setPointerCapture(e.pointerId);
+    const [x, y] = pos(e);
+    push(T.MouseMove, x, y, 0, 0, mods(e));
+    push(T.MouseDown, x, y, button(e), 0, btnMods(e));
+    ime.focus({preventScroll: true});
+    e.preventDefault();
+  });
+  canvas.addEventListener('pointerup', (e) => {
+    const [x, y] = pos(e);
+    push(T.MouseUp, x, y, button(e), 0, btnMods(e));
+    e.preventDefault();
+  });
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  canvas.addEventListener('wheel', (e) => {
+    const [x, y] = pos(e);
+    push(T.Wheel, x, y, 0, 0, mods(e), e.deltaY > 0 ? -120 : 120);
+    e.preventDefault();
+  }, {passive: false});
+
+  const VK = {Backspace: 8, Tab: 9, Enter: 13, NumpadEnter: 13, ShiftLeft: 16, ShiftRight: 16, ControlLeft: 17,
+    ControlRight: 17, AltLeft: 18, AltRight: 18, Pause: 19, CapsLock: 20, Escape: 27, Space: 32, PageUp: 33,
+    PageDown: 34, End: 35, Home: 36, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Insert: 45,
+    Delete: 46, Semicolon: 186, Equal: 187, Comma: 188, Minus: 189, Period: 190, Slash: 191, Backquote: 192,
+    BracketLeft: 219, Backslash: 220, BracketRight: 221, Quote: 222, IntlRo: 226, IntlYen: 220,
+    NumpadMultiply: 106, NumpadAdd: 107, NumpadSubtract: 109, NumpadDecimal: 110, NumpadDivide: 111,
+    Convert: 28, NonConvert: 29, KanaMode: 21, Lang1: 21, Lang2: 25};
+  const vk = (e) => {
+    if (VK[e.code] !== undefined) return VK[e.code];
+    let m = /^Key([A-Z])$/.exec(e.code); if (m) return m[1].charCodeAt(0);
+    m = /^Digit(\d)$/.exec(e.code); if (m) return 48 + +m[1];
+    m = /^Numpad(\d)$/.exec(e.code); if (m) return 96 + +m[1];
+    m = /^F(\d+)$/.exec(e.code); if (m) return 111 + +m[1];
+    return 0;
+  };
+  // A key that types a character goes to the textarea as well, which sends the
+  // character (and handles Japanese input); anything else is stopped here so
+  // the browser does not act on it.
+  ime.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    const k = vk(e);
+    if (k) push(T.KeyDown, 0, 0, 0, k, mods(e));
+    const typing = e.key.length === 1 && !e.ctrlKey && !e.altKey;
+    if (!typing) e.preventDefault();
+  });
+  ime.addEventListener('keyup', (e) => { const k = vk(e); if (k) push(T.KeyUp, 0, 0, 0, k, mods(e)); });
+  const sendText = (s) => { for (const ch of s) push(T.Char, 0, 0, 0, 0, 0, ch.codePointAt(0)); };
+  ime.addEventListener('input', (e) => { if (e.isComposing) return; sendText(ime.value); ime.value = ''; });
+  ime.addEventListener('compositionend', (e) => { sendText(e.data || ime.value); ime.value = ''; });
+  canvas.addEventListener('focus', () => ime.focus({preventScroll: true}));
+}
+</script>
+</body>
+</html>

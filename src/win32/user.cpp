@@ -366,7 +366,12 @@ void Gui::compose(bool) {
     for (auto it = d->children.rbegin(); it != d->children.rend(); ++it) {
         Window* t = win(*it);
         if (!t || !(t->style & WS_VISIBLE) || !t->surface) continue;
-        if (dwm_frame(t->style, t->exstyle) && !t->maximized) {
+        // A window that took its whole rectangle as client area (Winamp's
+        // skinned ones, through WM_NCCALCSIZE) has no frame for DWM to draw
+        // round, and no shadow.
+        bool frameless = t->crect.l == t->wrect.l && t->crect.t == t->wrect.t &&
+                         t->crect.r == t->wrect.r && t->crect.b == t->wrect.b;
+        if (dwm_frame(t->style, t->exstyle) && !t->maximized && !frameless) {
             compose_dwm(t);
             continue;
         }

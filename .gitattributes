@@ -1,4 +1,5 @@
-jwemu.data binary
-jwemu.wasm binary
+waemu.data binary
+waemu.wasm binary
 dlls_dist/**/*.dll binary
 *.png binary
+orig/*.exe binary

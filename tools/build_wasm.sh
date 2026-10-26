@@ -1,7 +1,8 @@
 #!/bin/sh
-# Builds the browser version: jwemu.js / jwemu.wasm / jwemu.data in the
+# Builds the browser version: waemu.js / waemu.wasm / waemu.data in the
 # repository root (GitHub Pages serves main:/).  Low priority, like the native
-# build.  WASM_OUT=<dir> writes somewhere else.
+# build.  WASM_OUT=<dir> writes somewhere else.  Winamp itself comes out of
+# orig/winamp295.exe (tools/prepare_winamp.py) into build/drive_c.
 set -e
 cd "$(dirname "$0")/.."
 EMSDK="${EMSDK:-/c/prog/emsdk/emsdk}"
@@ -45,16 +46,17 @@ ko="$OBJ/kanji.o"
 # "C;C:"); the emscripten virtual paths must reach emcc as written.
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 # What the guest finds on its C: drive, and the fonts and DLLs beside it.
-PRELOAD="--preload-file orig@/C:/jww --exclude-file orig/jww10036.exe --exclude-file orig/Jw_cad.chm --exclude-file orig/out.log"
+[ -f build/drive_c/Winamp/winamp.exe ] || python -I tools/prepare_winamp.py orig/winamp295.exe build/drive_c
+PRELOAD="--preload-file build/drive_c/Winamp@/C:/Winamp --preload-file samples@/C:/Music"
 PRELOAD="$PRELOAD --preload-file fonts@/fonts --preload-file dlls@/dlls"
 
-"$EMCC" -O2 -fwasm-exceptions $objs "$ko" -o "$OUT/jwemu.js" \
-    -sMODULARIZE=1 -sEXPORT_NAME=createJwemu \
+"$EMCC" -O2 -fwasm-exceptions $objs "$ko" -o "$OUT/waemu.js" \
+    -sMODULARIZE=1 -sEXPORT_NAME=createWaemu \
     -sENVIRONMENT=worker,node \
     -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=4GB -sINITIAL_MEMORY=128MB \
     -sSTACK_SIZE=16MB \
     -sFORCE_FILESYSTEM=1 \
-    -sEXPORTED_FUNCTIONS='["_jwemu_main"]' \
-    -sEXPORTED_RUNTIME_METHODS='["FS","ENV","HEAPU8","HEAP32","ccall"]' \
+    -sEXPORTED_FUNCTIONS='["_waemu_main"]' \
+    -sEXPORTED_RUNTIME_METHODS='["FS","ENV","HEAPU8","HEAP16","HEAP32","ccall"]' \
     $PRELOAD
-ls -l "$OUT"/jwemu.js "$OUT"/jwemu.wasm "$OUT"/jwemu.data
+ls -l "$OUT"/waemu.js "$OUT"/waemu.wasm "$OUT"/waemu.data
