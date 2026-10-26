@@ -1,0 +1,9 @@
+build/
+waemu.exe
+dlls/
+*.png
+tmp/
+!docs/*.png
+__pycache__/
+# Winamp 本体（インストーラ）は再配布の扱いを確認するまで入れない
+orig/
